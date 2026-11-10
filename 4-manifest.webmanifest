@@ -1,0 +1,17 @@
+{
+  "name": "Meine Fixkosten",
+  "short_name": "Fixkosten",
+  "description": "Einfacher Fixkosten-Tracker. Alle Daten bleiben nur auf diesem Gerät.",
+  "lang": "de",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f0ea",
+  "theme_color": "#101114",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
