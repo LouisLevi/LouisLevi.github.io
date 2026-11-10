@@ -1,7 +1,7 @@
 /* Meine Fixkosten - Service Worker: App komplett offline nutzbar.
-   Navigationsanfragen: Netz zuerst (damit Updates ankommen), Cache als Offline-Fallback.
-   Statische Dateien: Cache zuerst, dann Netz. */
-var CACHE = 'fixkosten-v2';
+   Seiten, Skript, Styles und Manifest: Netz zuerst (damit Updates ankommen), Cache als Offline-Fallback.
+   Icons: Cache zuerst (sie aendern sich nie). */
+var CACHE = 'fixkosten-v3';
 var ASSETS = [
   'index.html',
   'style.css',
@@ -27,33 +27,43 @@ self.addEventListener('activate', function (event) {
   );
 });
 
+function networkFirst(request, cacheKey) {
+  return fetch(request).then(function (response) {
+    if (response && response.ok) {
+      var copy = response.clone();
+      caches.open(CACHE).then(function (cache) { cache.put(cacheKey || request, copy); });
+    }
+    return response;
+  }).catch(function () {
+    return caches.match(cacheKey || request);
+  });
+}
+
+function cacheFirst(request) {
+  return caches.match(request).then(function (hit) {
+    return hit || fetch(request).then(function (response) {
+      if (response && response.ok && request.url.indexOf(self.location.origin) === 0) {
+        var copy = response.clone();
+        caches.open(CACHE).then(function (cache) { cache.put(request, copy); });
+      }
+      return response;
+    });
+  });
+}
+
 self.addEventListener('fetch', function (event) {
   if (event.request.method !== 'GET') return;
+  var url = event.request.url;
 
   if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request).then(function (response) {
-        if (response && response.ok) {
-          var copy = response.clone();
-          caches.open(CACHE).then(function (cache) { cache.put('index.html', copy); });
-        }
-        return response;
-      }).catch(function () {
-        return caches.match('index.html');
-      })
-    );
+    event.respondWith(networkFirst(event.request, 'index.html'));
     return;
   }
-
-  event.respondWith(
-    caches.match(event.request).then(function (hit) {
-      return hit || fetch(event.request).then(function (response) {
-        if (response && response.ok && event.request.url.indexOf(self.location.origin) === 0) {
-          var copy = response.clone();
-          caches.open(CACHE).then(function (cache) { cache.put(event.request, copy); });
-        }
-        return response;
-      });
-    })
-  );
+  if (url.indexOf(self.location.origin) === 0 && /icon-\d+\.png|icon-maskable-\d+\.png/.test(url)) {
+    event.respondWith(cacheFirst(event.request));
+    return;
+  }
+  if (url.indexOf(self.location.origin) === 0) {
+    event.respondWith(networkFirst(event.request));
+  }
 });
