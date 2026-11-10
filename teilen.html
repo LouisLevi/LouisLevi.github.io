@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Geteilte Fixkosten</title>
+<meta name="theme-color" content="#101114">
+<meta name="description" content="Geteilte Fixkosten-Uebersicht. Die Daten stecken nur in diesem Link.">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/png" sizes="192" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app"></div>
+<noscript>Diese Uebersicht braucht JavaScript. Die Daten stecken dabei nur in diesem Link.</noscript>
+<script>
+(function () {
+'use strict';
+
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(function () { /* offline-only comfort, kein Fehler fuer die Ansicht */ });
+}
+
+window.addEventListener('hashchange', function () { location.reload(); });
+
+/* Geteilte Fixkosten - reine Leseansicht.
+   Die Daten stehen ausschliesslich im Link-Anhaenger (#d=...). Sie werden nicht
+   gespeichert, nicht an einen Server gesendet und sind in keiner Datei dieser Seite. */
+
+const CATEGORIES = [
+    { name: 'Miete', color: '#7ea6ff' },
+    { name: 'Strom', color: '#f5c044' },
+    { name: 'Heizung', color: '#f08c4a' },
+    { name: 'Internet', color: '#9b8cff' },
+    { name: 'Versicherung', color: '#73a89a' },
+    { name: 'Abo', color: '#f27ba7' },
+    { name: 'Sonstiges', color: '#9aa0a6' },
+];
+
+const RHYTHMS = [
+    { value: 'monatlich', label: 'Monatlich', factor: 1 },
+    { value: 'vierteljaehrlich', label: 'Vierteljährlich', factor: 1 / 3 },
+    { value: 'halbjaehrlich', label: 'Halbjährlich', factor: 1 / 6 },
+    { value: 'jaehrlich', label: 'Jährlich', factor: 1 / 12 },
+];
+
+const euro = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
+const fmt = (value) => euro.format(value);
+
+function monthlyOf(entry) {
+    if (entry.amount === null) return 0;
+    const rhythm = RHYTHMS.find(r => r.value === entry.rhythm) || RHYTHMS[0];
+    return entry.amount * rhythm.factor;
+}
+
+function fmtDate(iso) {
+    const d = new Date(iso + 'T00:00:00Z');
+    return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+function noticeDateOf(entry) {
+    if (!entry.contractEnd || !entry.noticeMonths) return null;
+    const d = new Date(entry.contractEnd + 'T00:00:00Z');
+    d.setUTCMonth(d.getUTCMonth() - entry.noticeMonths);
+    return d;
+}
+
+function startOfToday() {
+    const now = new Date();
+    return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+}
+
+function deadlineNote(entry) {
+    const today = startOfToday();
+    const notice = noticeDateOf(entry);
+    if (notice) {
+        const iso = notice.toISOString().slice(0, 10);
+        const days = Math.round((notice.getTime() - today.getTime()) / 86400000);
+        if (days < 0) return { text: 'Kündigungsfrist laut Angabe am ' + fmtDate(iso) + ' abgelaufen', danger: true };
+        if (days <= 30) return { text: 'Kündigen laut Frist spätestens bis ' + fmtDate(iso) + ' (noch ' + days + ' Tage)', danger: true };
+        return { text: 'Kündigen laut Frist spätestens bis ' + fmtDate(iso), danger: false };
+    }
+    if (entry.contractEnd) {
+        const end = new Date(entry.contractEnd + 'T00:00:00Z');
+        const days = Math.round((end.getTime() - today.getTime()) / 86400000);
+        if (days >= 0 && days <= 60) return { text: 'Vertrag endet in ' + days + ' Tagen - Frist im Vertrag prüfen', danger: false };
+    }
+    return null;
+}
+
+function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function donutSvg(parts, total) {
+    const size = 176, stroke = 26, r = (size - stroke) / 2, c = 2 * Math.PI * r;
+    const visible = parts.filter(p => p.value > 0);
+    let offset = 0;
+    let circles = '';
+    if (visible.length === 0) {
+        circles = '<circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="' + stroke + '"/>';
+    }
+    for (const p of visible) {
+        const frac = total > 0 ? p.value / total : 0;
+        const gap = visible.length > 1 ? Math.min(3, c * 0.01) : 0;
+        const len = Math.max(frac * c - gap, 0.5);
+        circles += '<circle cx="' + size / 2 + '" cy="' + size / 2 + '" r="' + r + '" fill="none" stroke="' + p.color + '" stroke-width="' + stroke + '" stroke-dasharray="' + len + ' ' + (c - len) + '" stroke-dashoffset="' + (-offset) + '"/>';
+        offset += frac * c;
+    }
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" role="img" aria-label="Kreisdiagramm der monatlichen Kosten"><g transform="rotate(-90 ' + size / 2 + ' ' + size / 2 + ')">' + circles + '</g></svg>';
+}
+
+function isEntry(e) {
+    return typeof e === 'object' && e !== null
+        && typeof e.id === 'string' && typeof e.name === 'string' && typeof e.category === 'string'
+        && (e.amount === null || (typeof e.amount === 'number' && e.amount > 0))
+        && RHYTHMS.some(r => r.value === e.rhythm)
+        && (e.contractEnd === undefined || typeof e.contractEnd === 'string')
+        && (e.noticeMonths === undefined || e.noticeMonths === null || typeof e.noticeMonths === 'number')
+        && (e.note === undefined || typeof e.note === 'string');
+}
+
+function decodePayload() {
+    const m = (location.hash || '').match(/^#d=([A-Za-z0-9\-_]+)/);
+    if (!m) return null;
+    try {
+        const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+        const json = decodeURIComponent(Array.prototype.map.call(atob(b64), c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+        const data = JSON.parse(json);
+        if (typeof data !== 'object' || data === null || !Array.isArray(data.eintraege)) return null;
+        data.eintraege = data.eintraege.filter(isEntry);
+        return data;
+    } catch (err) {
+        return null;
+    }
+}
+
+const data = decodePayload();
+const root = document.getElementById('app');
+
+if (!data) {
+    document.title = 'Geteilte Fixkosten';
+    root.innerHTML = '<header class="app-header"><h1>Geteilte Fixkosten</h1></header>'
+        + '<div class="tr-panel"><div class="tr-empty">Dieser Link enthält keine Daten. Bitte um den vollständigen Link - er darf beim Kopieren nicht abgeschnitten werden.</div></div>';
+    return;
+}
+
+const titel = typeof data.titel === 'string' && data.titel ? data.titel : 'Geteilte Fixkosten';
+const stand = typeof data.stand === 'string' ? data.stand : '';
+document.title = titel;
+
+const entries = data.eintraege;
+const monthlyTotal = entries.reduce((sum, e) => sum + monthlyOf(e), 0);
+const yearlyTotal = monthlyTotal * 12;
+
+const map = new Map();
+for (const e of entries) {
+    if (!map.has(e.category)) map.set(e.category, []);
+    map.get(e.category).push(e);
+}
+const byCategory = CATEGORIES
+    .filter(c => map.has(c.name))
+    .map(c => {
+        const list = map.get(c.name).slice().sort((a, b) => monthlyOf(b) - monthlyOf(a));
+        const sum = list.reduce((s, e) => s + monthlyOf(e), 0);
+        return { name: c.name, color: c.color, list, sum };
+    })
+    .sort((a, b) => b.sum - a.sum);
+
+let html = '<header class="app-header"><h1>' + esc(titel) + '</h1></header>';
+html += '<div class="tr-panel">';
+html += '<div class="donut-wrap">' + donutSvg(byCategory.map(c => ({ label: c.name, value: c.sum, color: c.color })), monthlyTotal)
+    + '<div class="donut-center"><div class="donut-total">' + fmt(monthlyTotal) + '</div><div class="donut-per">pro Monat</div></div></div>';
+html += '<div class="tr-year">' + fmt(yearlyTotal) + ' pro Jahr</div>';
+if (stand) html += '<div class="tr-open-count">Stand: ' + esc(stand) + ' · erfasste Kosten</div>';
+
+html += '<div class="tr-cats">';
+for (const c of byCategory) {
+    const share = monthlyTotal > 0 ? Math.round((c.sum / monthlyTotal) * 100) : 0;
+    html += '<div class="tr-cat-block">';
+    html += '<button type="button" class="tr-cat" data-cat="' + esc(c.name) + '" aria-expanded="false">'
+        + '<span class="tr-dot" style="background:' + c.color + '"></span>'
+        + '<span class="tr-cat-name">' + esc(c.name) + '</span>'
+        + '<span class="tr-cat-values"><span class="tr-cat-sum">' + fmt(c.sum) + '</span><span class="tr-cat-share">' + share + ' %</span></span></button>';
+    html += '<div class="tr-entries" hidden>';
+    for (const e of c.list) {
+        const note = deadlineNote(e);
+        const rhythmLabel = (RHYTHMS.find(r => r.value === e.rhythm) || {}).label || '';
+        const details = [
+            e.amount === null ? 'Betrag offen' : fmt(e.amount) + ' ' + rhythmLabel.toLowerCase(),
+            e.contractEnd ? 'Vertrag bis ' + fmtDate(e.contractEnd) : null,
+        ].filter(Boolean).join(' · ');
+        html += '<div class="tr-entry">';
+        html += '<div class="tr-entry-main">'
+            + '<div class="tr-entry-name">' + esc(e.name) + '</div>'
+            + '<div class="tr-entry-detail">' + esc(details) + '</div>';
+        if (note) html += '<div class="' + (note.danger ? 'tr-entry-note tr-entry-danger' : 'tr-entry-note') + '">' + esc(note.text) + '</div>';
+        if (e.note) html += '<div class="tr-entry-detail tr-entry-subnote" data-note="' + esc(e.id) + '" hidden>' + esc(e.note) + '</div>';
+        html += '</div>';
+        html += '<div class="tr-entry-side">';
+        if (e.amount === null) {
+            html += '<div class="tr-entry-value tr-entry-offen">offen</div>';
+        } else {
+            html += '<div class="tr-entry-value">' + fmt(monthlyOf(e)) + '<span class="tr-entry-per"> /Monat</span></div>';
+        }
+        if (e.note) html += '<div class="tr-entry-actions"><button type="button" class="tr-remove" data-details="' + esc(e.id) + '">Details</button></div>';
+        html += '</div></div>';
+    }
+    html += '</div></div>';
+}
+html += '</div>';
+html += '<div class="paragraph" style="margin-top:16px">Nur zum Ansehen. Fristen sind aus den geteilten Angaben gerechnet - maßgeblich ist jeweils der Vertrag.</div>';
+html += '</div>';
+
+root.innerHTML = html;
+
+root.addEventListener('click', (ev) => {
+    const catBtn = ev.target.closest('[data-cat]');
+    if (catBtn) {
+        const block = catBtn.closest('.tr-cat-block');
+        const list = block ? block.querySelector('.tr-entries') : null;
+        if (list) {
+            const open = list.hasAttribute('hidden');
+            if (open) list.removeAttribute('hidden'); else list.setAttribute('hidden', '');
+            catBtn.setAttribute('aria-expanded', String(open));
+        }
+        return;
+    }
+    const detBtn = ev.target.closest('[data-details]');
+    if (detBtn) {
+        const noteEl = root.querySelector('[data-note="' + detBtn.getAttribute('data-details') + '"]');
+        if (noteEl) {
+            const open = noteEl.hasAttribute('hidden');
+            if (open) { noteEl.removeAttribute('hidden'); detBtn.textContent = 'Weniger'; }
+            else { noteEl.setAttribute('hidden', ''); detBtn.textContent = 'Details'; }
+        }
+    }
+});
+
+})();
+</script>
+</body>
+</html>
