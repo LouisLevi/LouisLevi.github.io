@@ -1,9 +1,10 @@
 /* Meine Fixkosten - Service Worker: App komplett offline nutzbar.
    Seiten, Skript, Styles und Manifest: Netz zuerst (damit Updates ankommen), Cache als Offline-Fallback.
    Icons: Cache zuerst (sie aendern sich nie). */
-var CACHE = 'fixkosten-v3';
+var CACHE = 'fixkosten-v4';
 var ASSETS = [
   'index.html',
+  'teilen.html',
   'style.css',
   'app.js',
   'manifest.webmanifest',
@@ -56,7 +57,22 @@ self.addEventListener('fetch', function (event) {
   var url = event.request.url;
 
   if (event.request.mode === 'navigate') {
-    event.respondWith(networkFirst(event.request, 'index.html'));
+    // Cache-Schluessel ohne URL-Anhaenger (#...): der Anhaenger kann geteilte Daten
+    // enthalten und gehoert nicht in den Cache. Er wird ohnehin nie zum Server gesendet.
+    var cleanUrl = event.request.url.split('#')[0];
+    event.respondWith(
+      fetch(event.request).then(function (response) {
+        if (response && response.ok) {
+          var copy = response.clone();
+          caches.open(CACHE).then(function (cache) { cache.put(cleanUrl, copy); });
+        }
+        return response;
+      }).catch(function () {
+        return caches.match(cleanUrl).then(function (hit) {
+          return hit || caches.match('index.html');
+        });
+      })
+    );
     return;
   }
   if (url.indexOf(self.location.origin) === 0 && /icon-\d+\.png|icon-maskable-\d+\.png/.test(url)) {
