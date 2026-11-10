@@ -344,7 +344,11 @@ function bind() {
     sync('f-amount', 'amount');
     sync('f-end', 'end');
     const imp = document.getElementById('f-import');
-    if (imp) imp.addEventListener('input', () => { importText = imp.value; });
+    if (imp) imp.addEventListener('input', () => {
+        importText = imp.value;
+        const btn = document.getElementById('btn-restore');
+        if (btn) btn.disabled = imp.value.trim().length === 0;
+    });
 }
 
 function bindChoices(id, set) {
